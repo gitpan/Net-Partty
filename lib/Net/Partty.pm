@@ -4,7 +4,7 @@ use strict;
 use warnings;
 use base 'Class::Accessor::Fast';
 __PACKAGE__->mk_accessors(qw/ sock host port select /);
-our $VERSION = '0.01';
+our $VERSION = '0.02';
 
 use Carp;
 use IO::Select;

@@ -13,6 +13,7 @@ use Net::Partty;
 use IO::Pty;
 use IO::Select;
 use Term::ReadKey;
+use POSIX ();
 
 my $opts = {};
 Getopt::Long::GetOptions(
@@ -22,6 +23,7 @@ Getopt::Long::GetOptions(
     '--writable_password=s' => \$opts->{writable_password},
     '--readonly_password=s' => \$opts->{readonly_password},
     '--kill_guest'          => \$opts->{kill_guest},
+    '--noconnect'           => \$opts->{noconnect},
 ) or pod2usage(2);
 Getopt::Long::Configure("bundling");
 pod2usage(-verbose => 2) if $help;
@@ -33,9 +35,12 @@ $opts->{readonly_password} ||= '';
 
 use YAML;warn Dump($opts);
 
-my $partty = Net::Partty->new;
-eval { $partty->connect(%{ $opts }) };
-pod2usage(-verbose => 2) if $@;
+my $partty;
+unless ($opts->{noconnect}) {
+    $partty = Net::Partty->new;
+    eval { $partty->connect(%{ $opts }) };
+    pod2usage(-verbose => 2) if $@;
+}
 $ENV{PARTTY_SESSION} = $opts->{session_name};
 
 
@@ -62,6 +67,7 @@ if ($pid < 0) {
 } else {
     # child
     close $master;
+    POSIX::setsid;
 
     # like dup2
     open STDOUT, '>&', $slave or die $!;
@@ -70,34 +76,46 @@ if ($pid < 0) {
 
     close $slave;
     my $shell = $ENV{SHELL} || '/bin/sh';
-    exit exec $shell, '-i';
+    my($name) = $shell =~ m!([^/]+)$!;
+    $name ||= $shell;
+    exit exec { $shell } $name, '-i';
 }
 
 ReadMode 'raw', \*STDIN;
+set_windowsize(\*STDOUT, $master);
+
 $master->blocking(0);
 STDIN->blocking(0);
 STDOUT->blocking(0);
-$partty->sock->blocking(0);
+$partty->sock->blocking(0) unless $opts->{noconnect};
 
 my $select = IO::Select->new;
 $select->add($master);
 $select->add(\*STDIN);
-$select->add($partty->sock);
+$select->add($partty->sock) unless $opts->{noconnect};
 
 my $m_fno = fileno($master);
 my $i_fno = fileno(\*STDIN);
-my $p_fno = fileno($partty->sock);
+my $p_fno;
+$p_fno = fileno($partty->sock) unless $opts->{noconnect};
+
+my $out_select = IO::Select->new;
+$out_select->add(\*STDOUT);
 
 while (1) {
     my @ready = $select->can_read(10);
     next unless @ready;
+    set_windowsize(\*STDOUT, $master);
     for my $fh (@ready) {
         my $fno = fileno($fh);
         if ($fno == $m_fno) {
             my $len = $fh->sysread(my $buf, 4096);
             STDOUT->syswrite($buf, $len);
-            $partty->can_write(100);
-            $partty->sock->syswrite($buf, $len);
+            unless ($opts->{noconnect}) {
+                $partty->sock->syswrite($buf, $len);
+                $partty->can_write(100);
+            }
+            $out_select->can_write(100);
         } elsif ($fno == $i_fno) {
             my $len = $fh->sysread(my $buf, 4096);
             $master->syswrite($buf, $len);
@@ -108,6 +126,23 @@ while (1) {
     }
 }
 print "end\n";
+
+my $old_size;
+sub set_windowsize {
+    $old_size ||= '';
+    my($in, $out) = @_;
+
+    my @size = GetTerminalSize $in;
+    my $now_size = join '-', @size;
+    return if $now_size eq $old_size;
+    $old_size = $now_size;
+    SetTerminalSize @size, $out;
+
+    return if $opts->{noconnect};
+    my $cmd = pack 'CCCnnCC', 255, 250, 31, $size[0], $size[1], 255, 240;
+    $partty->sock->syswrite($cmd, 9);
+    $partty->can_write(100);
+}
 
 __END__
 
@@ -123,6 +158,7 @@ __END__
         -w <operation password>  password to operate the session
         -r <view password>       password to view the session
         -k                       disable all gust operation regardless of operation password
+        -n                       not connect to partty server
 
 =head1 UNSUPPORTED
 
@@ -130,5 +166,4 @@ __END__
 
 =head1 TODO
 
-    terminal size を継承する
-    
+    terminal size を継承する(もう少しちゃんと)
