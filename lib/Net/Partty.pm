@@ -4,11 +4,11 @@ use strict;
 use warnings;
 use base 'Class::Accessor::Fast';
 __PACKAGE__->mk_accessors(qw/ sock host port select /);
-our $VERSION = '0.02';
+our $VERSION = '0.03';
 
 use Carp;
 use IO::Select;
-use IO::Socket;
+use IO::Socket::Telnet;
 
 my $DefaultOpts = {
     host => 'www.partty.org',
@@ -32,10 +32,9 @@ sub new {
 
 sub _sock_open {
     my $self = shift;
-    $self->{sock} = IO::Socket::INET->new(
+    $self->{sock} = IO::Socket::Telnet->new(
         PeerAddr => $self->host,
         PeerPort => $self->port,
-        Blocking => 1,
         Proto    => 'tcp',
     ) or croak $!;
     $self->select->add($self->{sock});
@@ -53,12 +52,12 @@ sub _sock_close {
 sub _send_uint8 {
     my($self, $int) = @_;
     my $data = pack 'C', $int;
-    $self->sock->syswrite($data, 1);
+    $self->sock->send($data);
 }
 sub _send_uint16 {
     my($self, $int) = @_;
     my $data = pack 'n', $int;
-    $self->sock->syswrite($data, 2);
+    $self->sock->send($data);
 }
 
 sub connect {
@@ -72,15 +71,14 @@ sub connect {
     croak join(', ', @error) . ' parameters is required.' if @error;
 
     croak 'session time out' unless $self->can_write(10);
-    $self->sock->syswrite('Partty!', 7);
+    $self->sock->send('Partty!');
     $self->_send_uint8(2);
     for my $param (@params) {
         $self->_send_uint16(length $opts{$param});
     }
     for my $param (@params) {
-        $self->sock->syswrite($opts{$param}, length $opts{$param});
+        $self->sock->send($opts{$param});
     }
-    $self->sock->flush;
 
 
     croak 'session time out' unless $self->can_read(10);
@@ -104,6 +102,14 @@ sub can_write {
     $self->select->can_write($time);
 }
 
+{
+    package #
+	IO::Socket::Telnet;
+    sub sb {
+        my($self, $cmd, $opt) = @_;
+        $self->send(chr(255) . chr(250) . $cmd . $opt . chr(255) . chr(240));
+    }
+}
 
 1;
 __END__

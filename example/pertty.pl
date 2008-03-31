@@ -112,7 +112,7 @@ while (1) {
             my $len = $fh->sysread(my $buf, 4096);
             STDOUT->syswrite($buf, $len);
             unless ($opts->{noconnect}) {
-                $partty->sock->syswrite($buf, $len);
+                $partty->sock->send($buf);
                 $partty->can_write(100);
             }
             $out_select->can_write(100);
@@ -120,8 +120,8 @@ while (1) {
             my $len = $fh->sysread(my $buf, 4096);
             $master->syswrite($buf, $len);
         } elsif ($fno == $p_fno) {
-            my $len = $fh->sysread(my $buf, 4096);
-            $master->syswrite($buf, $len) unless $opts->{kill_guest};
+            $fh->recv(my $buf, 4096);
+            $master->syswrite($buf) unless $opts->{kill_guest};
         }
     }
 }
@@ -139,9 +139,7 @@ sub set_windowsize {
     SetTerminalSize @size, $out;
 
     return if $opts->{noconnect};
-    my $cmd = pack 'CCCnnCC', 255, 250, 31, $size[0], $size[1], 255, 240;
-    $partty->sock->syswrite($cmd, 9);
-    $partty->can_write(100);
+    $partty->sock->sb(chr(31), pack('nn', $size[0], $size[1]));
 }
 
 __END__

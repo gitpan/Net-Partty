@@ -10,4 +10,9 @@ no_index:
   directory: 
     - inc
     - t
-version: 0.02
+requires: 
+  Carp: 0
+  Class::Accessor::Fast: 0
+  IO::Select: 0
+  IO::Socket::Telnet: 0
+version: 0.03
